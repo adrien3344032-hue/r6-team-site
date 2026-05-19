@@ -58,7 +58,11 @@ let matches = [];
 let availability = {};
 let planning = [];
 let activityLog = [];
+let strats = [];
+let currentStratFolderId = "";
+let imageZoom = 1;
 let dataUnsubscribes = [];
+let profileUnsubscribe = null;
 let isRegistering = false;
 
 const config = window.R6_FIREBASE_CONFIG || {};
@@ -90,6 +94,15 @@ function bindAuth() {
   $("leaveTeamBtn")?.addEventListener("click", leaveCurrentTeam);
   $("deleteTeamBtn")?.addEventListener("click", deleteCurrentTeam);
   $("themeToggleBtn")?.addEventListener("click", toggleTheme);
+  $("notificationBtn")?.addEventListener("click", toggleNotificationPanel);
+  $("markNotificationsReadBtn")?.addEventListener("click", markNotificationsRead);
+  $("addStratFolderBtn")?.addEventListener("click", addStratFolder);
+  $("addStratImageBtn")?.addEventListener("click", () => $("stratImageInput")?.click());
+  $("stratImageInput")?.addEventListener("change", handleStratImageUpload);
+  $("closeImageModalBtn")?.addEventListener("click", closeImageModal);
+  $("zoomInBtn")?.addEventListener("click", () => setImageZoom(imageZoom + 0.25));
+  $("zoomOutBtn")?.addEventListener("click", () => setImageZoom(imageZoom - 0.25));
+  $("zoomResetBtn")?.addEventListener("click", () => setImageZoom(1));
   initTheme();
   subscribeTeamsPublic();
   updateRegisterMode();
@@ -115,11 +128,13 @@ function bindAuth() {
     currentUser = user;
     if (isRegistering) return;
     if (!user) {
+      clearProfileSubscription();
       clearDataSubscriptions();
       showLogin();
       return;
     }
     await loadProfile(user);
+    startProfileSubscription(user);
     if (hasNoTeam()) {
       showNoTeam();
       return;
@@ -253,6 +268,7 @@ async function register() {
       currentUser = cred.user;
       currentProfile = profile;
       currentTeam = { id: teamRef.id, name: teamName, ownerUid: cred.user.uid, ownerName: pseudo };
+      startProfileSubscription(cred.user);
       isRegistering = false;
       setMsg("loginMsg", "Compte créé. Tu es admin de ton équipe.");
       showMain();
@@ -294,6 +310,7 @@ async function register() {
       currentUser = cred.user;
       currentProfile = profile;
       currentTeam = { id: teamIdToJoin, name: team?.name || "Équipe", ownerUid: team?.ownerUid || "" };
+      startProfileSubscription(cred.user);
       isRegistering = false;
       setMsg("loginMsg", "Demande envoyée à l’admin de l’équipe.");
       showPending();
@@ -344,6 +361,44 @@ async function loadProfile(user) {
   currentTeam = currentProfile.teamId ? (teams.find((t) => t.id === currentProfile.teamId) || { id: currentProfile.teamId, name: currentProfile.teamName || "Mon équipe" }) : null;
 }
 
+function clearProfileSubscription() {
+  if (profileUnsubscribe) {
+    try { profileUnsubscribe(); } catch (_) {}
+  }
+  profileUnsubscribe = null;
+}
+
+function startProfileSubscription(user) {
+  if (!db || !user) return;
+  clearProfileSubscription();
+  profileUnsubscribe = onSnapshot(doc(db, "users", user.uid), (snap) => {
+    if (!snap.exists() || !currentUser || currentUser.uid !== user.uid) return;
+    const nextProfile = { uid: user.uid, ...snap.data() };
+    const previousTeamId = currentProfile?.teamId || "";
+    const previousRole = currentProfile?.role || "";
+    const previousStatus = currentProfile?.status || "";
+    currentProfile = nextProfile;
+    currentTeam = currentProfile.teamId
+      ? (teams.find((t) => t.id === currentProfile.teamId) || { id: currentProfile.teamId, name: currentProfile.teamName || "Mon équipe" })
+      : null;
+
+    if (hasNoTeam()) {
+      clearDataSubscriptions();
+      showNoTeam();
+      return;
+    }
+    if (["pending", "rejected"].includes(currentProfile?.role) || ["pending", "rejected"].includes(currentProfile?.status)) {
+      clearDataSubscriptions();
+      showPending();
+      return;
+    }
+
+    const needsResubscribe = previousTeamId !== currentProfile.teamId || previousRole !== currentProfile.role || previousStatus !== currentProfile.status;
+    showMain();
+    if (needsResubscribe || !dataUnsubscribes.length) subscribeData();
+  }, (err) => console.warn("Profil non synchronisé", err));
+}
+
 function hasNoTeam() {
   return !currentProfile?.teamId || currentProfile?.role === "none" || currentProfile?.status === "no_team";
 }
@@ -356,6 +411,8 @@ function showLogin() {
   $("noTeamView")?.classList.add("hidden");
   $("mainView").classList.add("hidden");
   $("logoutBtn").classList.add("hidden");
+  $("notificationBtn")?.classList.add("hidden");
+  $("notificationPanel")?.classList.add("hidden");
   $("userInfo").textContent = "Non connecté";
   showAuthPanel("choice");
 }
@@ -366,11 +423,13 @@ function showMain() {
   $("noTeamView")?.classList.add("hidden");
   $("mainView").classList.remove("hidden");
   $("logoutBtn").classList.remove("hidden");
+  $("notificationBtn")?.classList.remove("hidden");
   $("userInfo").textContent = `${currentProfile.name || "Compte connecté"} — ${roleLabel(currentProfile.role)} — ${currentTeam?.name || currentProfile.teamName || "Équipe"}`;
   $("roleText").textContent = `Ton rôle : ${roleLabel(currentProfile.role)} dans ${currentTeam?.name || currentProfile.teamName || "ton équipe"}.`;
   $("adminTab").classList.toggle("hidden", currentProfile.role !== "admin");
   $("historyTabBtn")?.classList.toggle("hidden", currentProfile.role !== "admin");
   $("teamMemberActions")?.classList.toggle("hidden", currentProfile.role === "admin");
+  $("stratAdminActions")?.classList.toggle("hidden", currentProfile.role !== "admin");
 }
 
 function showPending() {
@@ -379,6 +438,8 @@ function showPending() {
   $("noTeamView")?.classList.add("hidden");
   $("pendingView")?.classList.remove("hidden");
   $("logoutBtn").classList.add("hidden");
+  $("notificationBtn")?.classList.add("hidden");
+  $("notificationPanel")?.classList.add("hidden");
   const isRejected = currentProfile?.role === "rejected";
   $("userInfo").textContent = `${currentProfile?.name || "Compte connecté"} — ${roleLabel(currentProfile?.role)}`;
   if ($("pendingText")) {
@@ -397,6 +458,7 @@ function showNoTeam() {
   $("mainView").classList.add("hidden");
   $("noTeamView")?.classList.remove("hidden");
   $("logoutBtn").classList.remove("hidden");
+  $("notificationBtn")?.classList.remove("hidden");
   $("userInfo").textContent = `${currentProfile?.name || "Compte connecté"} — Sans équipe`;
   renderTeamSelect();
 }
@@ -498,13 +560,18 @@ function clearDataSubscriptions() {
   availability = {};
   planning = [];
   activityLog = [];
+  strats = [];
+  currentStratFolderId = "";
 }
 
 function subscribeData() {
   clearDataSubscriptions();
   if (!currentProfile?.teamId) return;
 
-  const unsubUsers = onSnapshot(collection(db, "users"), (snap) => {
+  const usersQuery = currentProfile.role === "admin"
+    ? query(collection(db, "users"), where("teamId", "==", currentProfile.teamId))
+    : query(collection(db, "users"), where("teamId", "==", currentProfile.teamId), where("status", "==", "active"));
+  const unsubUsers = onSnapshot(usersQuery, (snap) => {
     const allUsers = snap.docs.map((d) => ({ id: d.id, uid: d.id, ...d.data() }));
     const self = allUsers.find((u) => u.uid === currentUser?.uid);
     if (self && (self.teamId !== currentProfile.teamId || self.status === "no_team" || self.role === "none" || !self.teamId)) {
@@ -512,11 +579,12 @@ function subscribeData() {
       showNoTeam();
       return;
     }
-    registeredUsers = allUsers.filter((u) => u.teamId === currentProfile.teamId);
+    registeredUsers = allUsers.filter((u) => u.teamId === currentProfile.teamId && (currentProfile.role === "admin" || u.status === "active"));
     players = registeredUsers
       .filter((u) => ["admin", "player"].includes(u.role || "pending"))
       .sort((a, b) => String(a.name || "").localeCompare(String(b.name || ""), "fr"));
     renderPlayers();
+    renderNotifications();
     renderMatchPlayerInputs();
     renderAvailability();
     renderSummary();
@@ -526,7 +594,7 @@ function subscribeData() {
   dataUnsubscribes.push(unsubUsers);
 
   if (currentProfile.role === "admin") {
-    const unsubRequests = onSnapshot(query(collection(db, "teamRequests"), orderBy("createdAt", "desc")), (snap) => {
+    const unsubRequests = onSnapshot(query(collection(db, "teamRequests"), where("teamId", "==", currentProfile.teamId)), (snap) => {
       const byUid = new Map();
       snap.docs
         .map((d) => ({ id: d.id, ...d.data() }))
@@ -538,10 +606,18 @@ function subscribeData() {
           // On ne remplace pas ce pseudo par celui d'un autre document pour éviter
           // les doublons ou les changements de nom inattendus.
           const merged = { ...r, name: r.requestedName || r.name || user?.name || "Joueur", email: user?.email || r.email || "" };
-          if (!byUid.has(r.uid)) byUid.set(r.uid, merged);
+          const previous = byUid.get(r.uid);
+          const currentTime = merged.createdAt?.toMillis ? merged.createdAt.toMillis() : 0;
+          const previousTime = previous?.createdAt?.toMillis ? previous.createdAt.toMillis() : -1;
+          if (!previous || currentTime >= previousTime) byUid.set(r.uid, merged);
         });
-      pendingRequests = Array.from(byUid.values());
+      pendingRequests = Array.from(byUid.values()).sort((a, b) => {
+        const da = a.createdAt?.toMillis ? a.createdAt.toMillis() : 0;
+        const dbb = b.createdAt?.toMillis ? b.createdAt.toMillis() : 0;
+        return dbb - da;
+      });
       renderPlayers();
+      renderNotifications();
     });
     dataUnsubscribes.push(unsubRequests);
   }
@@ -567,13 +643,18 @@ function subscribeData() {
   });
   dataUnsubscribes.push(unsubMatches);
 
-  if (currentProfile.role === "admin") {
-    const unsubLog = onSnapshot(query(teamCollection("activityLog"), orderBy("createdAt", "desc"), limit(80)), (snap) => {
-      activityLog = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-      renderActivityLog();
-    });
-    dataUnsubscribes.push(unsubLog);
-  }
+  const unsubStrats = onSnapshot(query(teamCollection("strats"), orderBy("createdAt", "asc")), (snap) => {
+    strats = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    renderStrats();
+  });
+  dataUnsubscribes.push(unsubStrats);
+
+  const unsubLog = onSnapshot(query(teamCollection("activityLog"), orderBy("createdAt", "desc"), limit(80)), (snap) => {
+    activityLog = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    renderActivityLog();
+    renderNotifications();
+  });
+  dataUnsubscribes.push(unsubLog);
 }
 
 function switchTab(tab) {
@@ -1357,6 +1438,7 @@ async function deleteCurrentTeam() {
     const reqSnap = await getDocs(query(collection(db, "teamRequests"), where("teamId", "==", teamId)));
     const matchesSnap = await getDocs(collection(db, "teams", teamId, "matches"));
     const logSnap = await getDocs(collection(db, "teams", teamId, "activityLog"));
+    const stratSnap = await getDocs(collection(db, "teams", teamId, "strats"));
 
     let batch = writeBatch(db);
     let count = 0;
@@ -1380,6 +1462,7 @@ async function deleteCurrentTeam() {
     await addDelete(doc(db, "teams", teamId, "planning", "week"));
     for (const m of matchesSnap.docs) await addDelete(m.ref);
     for (const l of logSnap.docs) await addDelete(l.ref);
+    for (const st of stratSnap.docs) await addDelete(st.ref);
     await addDelete(doc(db, "teams", teamId));
     if (count > 0) await batch.commit();
 
@@ -1490,6 +1573,264 @@ window.rejectAccess = async (uid) => {
   await setDoc(doc(db, "users", uid), { role: "rejected", status: "rejected", updatedAt: serverTimestamp() }, { merge: true });
   if (req?.id) await setDoc(doc(db, "teamRequests", req.id), { status: "rejected", handledBy: currentUser.uid, handledAt: serverTimestamp() }, { merge: true });
   await logActivity("user", `Demande refusée : ${req?.name || "Compte"}`, { targetUid: uid });
+};
+
+
+function notificationStorageKey() {
+  return `r6_notifications_seen_${currentProfile?.teamId || "global"}`;
+}
+
+function getNotificationSeenAt() {
+  return Number(localStorage.getItem(notificationStorageKey()) || "0");
+}
+
+function markNotificationsRead() {
+  localStorage.setItem(notificationStorageKey(), String(Date.now()));
+  renderNotifications();
+}
+
+function logMillis(item) {
+  if (item?.createdAt?.toMillis) return item.createdAt.toMillis();
+  if (item?.updatedAt?.toMillis) return item.updatedAt.toMillis();
+  return 0;
+}
+
+function notificationIcon(type) {
+  if (type === "match") return "🎯";
+  if (type === "planning") return "📅";
+  if (type === "strat") return "🗺️";
+  if (type === "user") return "👤";
+  if (type === "availability") return "✅";
+  return "🔔";
+}
+
+function toggleNotificationPanel() {
+  const panel = $("notificationPanel");
+  if (!panel) return;
+  panel.classList.toggle("hidden");
+  if (!panel.classList.contains("hidden")) renderNotifications();
+}
+
+function renderNotifications() {
+  const btn = $("notificationBtn");
+  const list = $("notificationList");
+  if (!btn || !currentProfile?.teamId) return;
+  const seenAt = getNotificationSeenAt();
+  const pendingNotifs = currentProfile?.role === "admin" ? pendingRequests.map((r) => ({
+    kind: "request",
+    type: "user",
+    message: `Nouvelle demande d’accès : ${r.name || "Joueur"}`,
+    userName: r.name || "Joueur",
+    createdAt: r.createdAt
+  })) : [];
+  const activityNotifs = activityLog
+    .filter((a) => ["user", "planning", "match", "strat"].includes(a.type || ""))
+    .map((a) => ({ kind: "activity", ...a }));
+  const items = [...pendingNotifs, ...activityNotifs]
+    .sort((a, b) => logMillis(b) - logMillis(a))
+    .slice(0, 20);
+  const unread = items.filter((n) => n.kind === "request" || logMillis(n) > seenAt).length;
+  $("notificationCount").textContent = String(unread);
+  btn.classList.toggle("has-notifications", unread > 0);
+  if (!list) return;
+  list.innerHTML = items.length ? items.map((n) => `<div class="notification-item ${n.kind === "request" || logMillis(n) > seenAt ? "unread" : ""}">
+    <span class="notification-icon">${notificationIcon(n.type)}</span>
+    <div><strong>${escapeHtml(n.message || "Notification")}</strong><br><span class="muted">${escapeHtml(n.userName || "Système")} — ${escapeHtml(formatLogDate(n.createdAt))}</span></div>
+  </div>`).join("") : `<p class="muted">Aucune notification pour le moment.</p>`;
+}
+
+function currentStratItems() {
+  return strats.filter((s) => (s.parentId || "") === (currentStratFolderId || ""));
+}
+
+function stratById(id) {
+  return strats.find((s) => s.id === id);
+}
+
+function renderStrats() {
+  const grid = $("stratGrid");
+  const crumb = $("stratBreadcrumb");
+  if (!grid || !crumb) return;
+  const canEdit = currentProfile?.role === "admin";
+  $("stratAdminActions")?.classList.toggle("hidden", !canEdit);
+
+  const trail = [];
+  let cursor = currentStratFolderId;
+  const guard = new Set();
+  while (cursor && !guard.has(cursor)) {
+    guard.add(cursor);
+    const item = stratById(cursor);
+    if (!item) break;
+    trail.unshift(item);
+    cursor = item.parentId || "";
+  }
+  crumb.innerHTML = `<button type="button" class="crumb-btn" onclick="window.openStratFolder('')">Stratégies</button>` + trail.map((item) => ` <span>/</span> <button type="button" class="crumb-btn" onclick="window.openStratFolder('${escapeAttr(item.id)}')">${escapeHtml(item.name)}</button>`).join("");
+
+  const items = currentStratItems().sort((a, b) => {
+    if ((a.type || "") !== (b.type || "")) return a.type === "folder" ? -1 : 1;
+    return String(a.name || "").localeCompare(String(b.name || ""), "fr");
+  });
+  grid.innerHTML = items.length ? items.map((item) => item.type === "folder" ? stratFolderCard(item, canEdit) : stratImageCard(item, canEdit)).join("") : `<p class="muted">Aucune strat ici. ${canEdit ? "Crée un dossier ou importe une image." : ""}</p>`;
+}
+
+function stratFolderCard(item, canEdit) {
+  return `<div class="strat-card strat-folder" onclick="window.openStratFolder('${escapeAttr(item.id)}')">
+    <div class="strat-thumb folder-thumb">📁</div>
+    <strong>${escapeHtml(item.name || "Dossier")}</strong>
+    ${canEdit ? `<button type="button" class="danger small-btn" onclick="event.stopPropagation(); window.deleteStratItem('${escapeAttr(item.id)}')">Supprimer</button>` : ""}
+  </div>`;
+}
+
+function stratImageCard(item, canEdit) {
+  return `<div class="strat-card strat-image" onclick="window.openStratImage('${escapeAttr(item.id)}')">
+    <div class="strat-thumb"><img src="${escapeAttr(item.imageData || "")}" alt="${escapeAttr(item.name || "Strat")}" /></div>
+    <strong>${escapeHtml(item.name || "Image")}</strong>
+    ${canEdit ? `<button type="button" class="danger small-btn" onclick="event.stopPropagation(); window.deleteStratItem('${escapeAttr(item.id)}')">Supprimer</button>` : ""}
+  </div>`;
+}
+
+window.openStratFolder = (id) => {
+  currentStratFolderId = id || "";
+  renderStrats();
+};
+
+window.openStratImage = (id) => {
+  const item = stratById(id);
+  if (!item?.imageData) return;
+  $("imageModalTitle").textContent = item.name || "Image";
+  $("imageModalImg").src = item.imageData;
+  imageZoom = 1;
+  setImageZoom(1);
+  $("imageModal")?.classList.remove("hidden");
+};
+
+function closeImageModal() {
+  $("imageModal")?.classList.add("hidden");
+  if ($("imageModalImg")) $("imageModalImg").src = "";
+}
+
+function setImageZoom(value) {
+  imageZoom = Math.max(0.4, Math.min(3, value));
+  const img = $("imageModalImg");
+  if (img) img.style.transform = `scale(${imageZoom})`;
+  if ($("zoomResetBtn")) $("zoomResetBtn").textContent = `${Math.round(imageZoom * 100)}%`;
+}
+
+async function addStratFolder() {
+  if (currentProfile?.role !== "admin") return;
+  const name = prompt("Nom du dossier ? Exemple : Club, Défense, Attaque...");
+  if (!name?.trim()) return;
+  try {
+    await addDoc(teamCollection("strats"), {
+      type: "folder",
+      name: name.trim(),
+      parentId: currentStratFolderId || "",
+      createdAt: serverTimestamp(),
+      createdBy: currentUser.uid
+    });
+    await logActivity("strat", `Dossier strat ajouté : ${name.trim()}`);
+    setMsg("stratMsg", "Dossier ajouté.");
+  } catch (err) {
+    setMsg("stratMsg", humanError(err));
+  }
+}
+
+async function handleStratImageUpload(event) {
+  if (currentProfile?.role !== "admin") return;
+  const file = event.target.files?.[0];
+  event.target.value = "";
+  if (!file) return;
+  if (!file.type.startsWith("image/")) {
+    setMsg("stratMsg", "Choisis une image valide.");
+    return;
+  }
+  const defaultName = file.name.replace(/\.[^.]+$/, "");
+  const name = prompt("Nom de l’image ? Exemple : Top, Mid, Sous-sol, RDC", defaultName) || defaultName;
+  if (!name.trim()) return;
+  setMsg("stratMsg", "Compression et import de l’image...");
+  try {
+    const imageData = await compressImageToDataUrl(file);
+    if (imageData.length > 900000) {
+      throw new Error("Image trop lourde après compression. Essaie avec une image plus petite ou une capture recadrée.");
+    }
+    await addDoc(teamCollection("strats"), {
+      type: "image",
+      name: name.trim(),
+      parentId: currentStratFolderId || "",
+      imageData,
+      originalFileName: file.name,
+      createdAt: serverTimestamp(),
+      createdBy: currentUser.uid
+    });
+    await logActivity("strat", `Image strat ajoutée : ${name.trim()}`);
+    setMsg("stratMsg", "Image ajoutée. Les joueurs peuvent la consulter et zoomer.");
+  } catch (err) {
+    setMsg("stratMsg", humanError(err));
+  }
+}
+
+function compressImageToDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("Lecture de l’image impossible."));
+    reader.onload = () => {
+      const img = new Image();
+      img.onerror = () => reject(new Error("Image impossible à charger."));
+      img.onload = () => {
+        const maxSide = 1400;
+        let { width, height } = img;
+        const scale = Math.min(1, maxSide / Math.max(width, height));
+        width = Math.round(width * scale);
+        height = Math.round(height * scale);
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(img, 0, 0, width, height);
+        let quality = 0.82;
+        let data = canvas.toDataURL("image/jpeg", quality);
+        while (data.length > 900000 && quality > 0.45) {
+          quality -= 0.08;
+          data = canvas.toDataURL("image/jpeg", quality);
+        }
+        resolve(data);
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+window.deleteStratItem = async (id) => {
+  if (currentProfile?.role !== "admin" || !id) return;
+  const item = stratById(id);
+  if (!item) return;
+  const hasChildren = strats.some((s) => (s.parentId || "") === id);
+  const msg = hasChildren
+    ? `Supprimer "${item.name}" et tout ce qu’il contient ?`
+    : `Supprimer "${item.name}" ?`;
+  if (!confirm(msg)) return;
+  try {
+    const ids = new Set([id]);
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const s of strats) {
+        if (!ids.has(s.id) && ids.has(s.parentId || "")) {
+          ids.add(s.id);
+          changed = true;
+        }
+      }
+    }
+    const batch = writeBatch(db);
+    ids.forEach((sid) => batch.delete(teamDoc("strats", sid)));
+    await batch.commit();
+    if (ids.has(currentStratFolderId)) currentStratFolderId = "";
+    await logActivity("strat", `Strat supprimée : ${item.name || "élément"}`);
+    setMsg("stratMsg", "Élément supprimé.");
+  } catch (err) {
+    setMsg("stratMsg", humanError(err));
+  }
 };
 
 function nameByUid(uid) {
