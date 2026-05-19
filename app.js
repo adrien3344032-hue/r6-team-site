@@ -14,6 +14,7 @@ import {
   getDoc,
   getDocs,
   deleteDoc,
+  writeBatch,
   collection,
   onSnapshot,
   addDoc,
@@ -83,6 +84,11 @@ function bindAuth() {
   $("refreshTeamsBtn")?.addEventListener("click", renderTeamSelect);
   $("logoutBtn").addEventListener("click", () => signOut(auth));
   $("pendingLogoutBtn")?.addEventListener("click", () => signOut(auth));
+  $("noTeamLogoutBtn")?.addEventListener("click", () => signOut(auth));
+  $("createTeamExistingBtn")?.addEventListener("click", createTeamForCurrentUser);
+  $("requestJoinExistingBtn")?.addEventListener("click", requestJoinTeamForCurrentUser);
+  $("leaveTeamBtn")?.addEventListener("click", leaveCurrentTeam);
+  $("deleteTeamBtn")?.addEventListener("click", deleteCurrentTeam);
   $("themeToggleBtn")?.addEventListener("click", toggleTheme);
   initTheme();
   subscribeTeamsPublic();
@@ -114,6 +120,10 @@ function bindAuth() {
       return;
     }
     await loadProfile(user);
+    if (hasNoTeam()) {
+      showNoTeam();
+      return;
+    }
     if (["pending", "rejected"].includes(currentProfile?.role)) {
       showPending();
       return;
@@ -151,13 +161,12 @@ function updateRegisterMode() {
 }
 
 function renderTeamSelect() {
-  const sel = $("teamSelect");
-  if (!sel) return;
-  if (!teams.length) {
-    sel.innerHTML = `<option value="">Aucune équipe créée pour le moment</option>`;
-    return;
-  }
-  sel.innerHTML = teams.map((t) => `<option value="${escapeAttr(t.id)}">${escapeHtml(t.name || "Équipe")}</option>`).join("");
+  const selects = [$("teamSelect"), $("noTeamSelect")].filter(Boolean);
+  if (!selects.length) return;
+  const html = !teams.length
+    ? `<option value="">Aucune équipe créée pour le moment</option>`
+    : teams.map((t) => `<option value="${escapeAttr(t.id)}">${escapeHtml(t.name || "Équipe")}</option>`).join("");
+  selects.forEach((sel) => { sel.innerHTML = html; });
 }
 
 async function pseudoExistsInTeam(pseudo, teamId, excludeUid = "") {
@@ -332,11 +341,16 @@ async function loadProfile(user) {
   currentTeam = currentProfile.teamId ? (teams.find((t) => t.id === currentProfile.teamId) || { id: currentProfile.teamId, name: currentProfile.teamName || "Mon équipe" }) : null;
 }
 
+function hasNoTeam() {
+  return !currentProfile?.teamId || currentProfile?.role === "none" || currentProfile?.status === "no_team";
+}
+
 function showLogin() {
   currentProfile = null;
   currentTeam = null;
   $("loginView").classList.remove("hidden");
   $("pendingView")?.classList.add("hidden");
+  $("noTeamView")?.classList.add("hidden");
   $("mainView").classList.add("hidden");
   $("logoutBtn").classList.add("hidden");
   $("userInfo").textContent = "Non connecté";
@@ -346,17 +360,20 @@ function showLogin() {
 function showMain() {
   $("loginView").classList.add("hidden");
   $("pendingView")?.classList.add("hidden");
+  $("noTeamView")?.classList.add("hidden");
   $("mainView").classList.remove("hidden");
   $("logoutBtn").classList.remove("hidden");
   $("userInfo").textContent = `${currentProfile.name || "Compte connecté"} — ${roleLabel(currentProfile.role)} — ${currentTeam?.name || currentProfile.teamName || "Équipe"}`;
   $("roleText").textContent = `Ton rôle : ${roleLabel(currentProfile.role)} dans ${currentTeam?.name || currentProfile.teamName || "ton équipe"}.`;
   $("adminTab").classList.toggle("hidden", currentProfile.role !== "admin");
   $("historyTabBtn")?.classList.toggle("hidden", currentProfile.role !== "admin");
+  $("teamMemberActions")?.classList.toggle("hidden", currentProfile.role === "admin");
 }
 
 function showPending() {
   $("loginView").classList.add("hidden");
   $("mainView").classList.add("hidden");
+  $("noTeamView")?.classList.add("hidden");
   $("pendingView")?.classList.remove("hidden");
   $("logoutBtn").classList.add("hidden");
   const isRejected = currentProfile?.role === "rejected";
@@ -365,6 +382,92 @@ function showPending() {
     $("pendingText").textContent = isRejected
       ? "Ta demande d’accès a été refusée. Contacte un admin si c’est une erreur."
       : `Ta demande pour rejoindre ${currentProfile?.teamName || "cette équipe"} est en attente. L’admin de l’équipe doit accepter ton accès avant que tu puisses utiliser le site.`;
+  }
+}
+
+
+function showNoTeam() {
+  clearDataSubscriptions();
+  currentTeam = null;
+  $("loginView").classList.add("hidden");
+  $("pendingView")?.classList.add("hidden");
+  $("mainView").classList.add("hidden");
+  $("noTeamView")?.classList.remove("hidden");
+  $("logoutBtn").classList.remove("hidden");
+  $("userInfo").textContent = `${currentProfile?.name || "Compte connecté"} — Sans équipe`;
+  renderTeamSelect();
+}
+
+async function createTeamForCurrentUser() {
+  if (!currentUser || !db) return;
+  const teamName = $("noTeamNameInput")?.value.trim();
+  if (!teamName) {
+    setMsg("noTeamMsg", "Entre le nom de ton équipe.");
+    return;
+  }
+  try {
+    const teamRef = await addDoc(collection(db, "teams"), {
+      name: teamName,
+      ownerUid: currentUser.uid,
+      ownerName: currentProfile?.name || currentUser.displayName || guessName(currentUser.email),
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp()
+    });
+    await setDoc(doc(db, "users", currentUser.uid), {
+      role: "admin",
+      status: "active",
+      teamId: teamRef.id,
+      teamName,
+      updatedAt: serverTimestamp()
+    }, { merge: true });
+    currentProfile = { ...currentProfile, role: "admin", status: "active", teamId: teamRef.id, teamName };
+    currentTeam = { id: teamRef.id, name: teamName, ownerUid: currentUser.uid };
+    setMsg("noTeamMsg", "Équipe créée. Tu es admin.");
+    showMain();
+    subscribeData();
+  } catch (err) {
+    setMsg("noTeamMsg", humanError(err));
+  }
+}
+
+async function requestJoinTeamForCurrentUser() {
+  if (!currentUser || !db) return;
+  const teamIdToJoin = $("noTeamSelect")?.value || "";
+  if (!teamIdToJoin) {
+    setMsg("noTeamMsg", "Choisis l’équipe à rejoindre.");
+    return;
+  }
+  try {
+    const teamSnap = await getDoc(doc(db, "teams", teamIdToJoin));
+    if (!teamSnap.exists()) {
+      setMsg("noTeamMsg", "Cette équipe n’existe plus.");
+      return;
+    }
+    const team = { id: teamSnap.id, ...teamSnap.data() };
+    const name = currentProfile?.name || currentUser.displayName || guessName(currentUser.email);
+    await setDoc(doc(db, "users", currentUser.uid), {
+      name,
+      role: "pending",
+      status: "pending",
+      teamId: teamIdToJoin,
+      teamName: team.name || "Équipe",
+      updatedAt: serverTimestamp()
+    }, { merge: true });
+    await setDoc(doc(db, "teamRequests", requestDocId(teamIdToJoin, currentUser.uid)), {
+      uid: currentUser.uid,
+      name,
+      requestedName: name,
+      teamId: teamIdToJoin,
+      teamName: team.name || "Équipe",
+      status: "pending",
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp()
+    }, { merge: true });
+    currentProfile = { ...currentProfile, role: "pending", status: "pending", teamId: teamIdToJoin, teamName: team.name || "Équipe" };
+    currentTeam = { id: teamIdToJoin, name: team.name || "Équipe", ownerUid: team.ownerUid || "" };
+    showPending();
+  } catch (err) {
+    setMsg("noTeamMsg", humanError(err));
   }
 }
 
@@ -395,9 +498,14 @@ function subscribeData() {
   if (!currentProfile?.teamId) return;
 
   const unsubUsers = onSnapshot(collection(db, "users"), (snap) => {
-    registeredUsers = snap.docs
-      .map((d) => ({ id: d.id, uid: d.id, ...d.data() }))
-      .filter((u) => u.teamId === currentProfile.teamId);
+    const allUsers = snap.docs.map((d) => ({ id: d.id, uid: d.id, ...d.data() }));
+    const self = allUsers.find((u) => u.uid === currentUser?.uid);
+    if (self && (self.teamId !== currentProfile.teamId || self.status === "no_team" || self.role === "none" || !self.teamId)) {
+      currentProfile = { ...currentProfile, ...self };
+      showNoTeam();
+      return;
+    }
+    registeredUsers = allUsers.filter((u) => u.teamId === currentProfile.teamId);
     players = registeredUsers
       .filter((u) => ["admin", "player"].includes(u.role || "pending"))
       .sort((a, b) => String(a.name || "").localeCompare(String(b.name || ""), "fr"));
@@ -1203,6 +1311,79 @@ window.deleteMatch = async (id) => {
   await deleteDoc(doc(db, "teams", currentProfile.teamId, "matches", id));
   await logActivity("match", "Match supprimé", { matchId: id });
 };
+
+
+async function leaveCurrentTeam() {
+  if (!currentUser || !currentProfile?.teamId) return;
+  if (currentProfile.role === "admin") {
+    alert("Un admin ne peut pas quitter l’équipe ici. Utilise plutôt Supprimer l’équipe, ou mets un autre compte admin avant de partir.");
+    return;
+  }
+  if (!confirm(`Quitter l’équipe ${currentTeam?.name || currentProfile.teamName || "actuelle"} ?`)) return;
+  try {
+    await setDoc(doc(db, "users", currentUser.uid), {
+      role: "none",
+      status: "no_team",
+      teamId: "",
+      teamName: "",
+      updatedAt: serverTimestamp()
+    }, { merge: true });
+    currentProfile = { ...currentProfile, role: "none", status: "no_team", teamId: "", teamName: "" };
+    showNoTeam();
+    setMsg("noTeamMsg", "Tu as quitté l’équipe. Tu peux en créer une nouvelle ou demander à rejoindre une autre équipe.");
+  } catch (err) {
+    alert(humanError(err));
+  }
+}
+
+async function deleteCurrentTeam() {
+  if (!currentUser || currentProfile?.role !== "admin" || !currentProfile?.teamId) return;
+  const teamName = currentTeam?.name || currentProfile.teamName || "cette équipe";
+  const confirmation = prompt(`Pour supprimer définitivement ${teamName}, écris SUPPRIMER`);
+  if (confirmation !== "SUPPRIMER") return;
+
+  try {
+    const teamId = currentProfile.teamId;
+    await logActivity("team", `Équipe supprimée : ${teamName}`, { teamId });
+
+    const usersSnap = await getDocs(query(collection(db, "users"), where("teamId", "==", teamId)));
+    const reqSnap = await getDocs(query(collection(db, "teamRequests"), where("teamId", "==", teamId)));
+    const matchesSnap = await getDocs(collection(db, "teams", teamId, "matches"));
+    const logSnap = await getDocs(collection(db, "teams", teamId, "activityLog"));
+
+    let batch = writeBatch(db);
+    let count = 0;
+    const commitIfNeeded = async () => {
+      if (count >= 450) {
+        await batch.commit();
+        batch = writeBatch(db);
+        count = 0;
+      }
+    };
+    const addUpdate = async (ref, data) => { batch.set(ref, data, { merge: true }); count++; await commitIfNeeded(); };
+    const addDelete = async (ref) => { batch.delete(ref); count++; await commitIfNeeded(); };
+
+    for (const u of usersSnap.docs) {
+      await addUpdate(u.ref, { role: "none", status: "no_team", teamId: "", teamName: "", updatedAt: serverTimestamp() });
+    }
+    for (const r of reqSnap.docs) {
+      await addUpdate(r.ref, { status: "team_deleted", handledBy: currentUser.uid, handledAt: serverTimestamp(), updatedAt: serverTimestamp() });
+    }
+    await addDelete(doc(db, "teams", teamId, "availability", "week"));
+    await addDelete(doc(db, "teams", teamId, "planning", "week"));
+    for (const m of matchesSnap.docs) await addDelete(m.ref);
+    for (const l of logSnap.docs) await addDelete(l.ref);
+    await addDelete(doc(db, "teams", teamId));
+    if (count > 0) await batch.commit();
+
+    currentProfile = { ...currentProfile, role: "none", status: "no_team", teamId: "", teamName: "" };
+    currentTeam = null;
+    showNoTeam();
+    setMsg("noTeamMsg", "Équipe supprimée. Tous les membres ont été retirés de l’équipe.");
+  } catch (err) {
+    alert(humanError(err));
+  }
+}
 
 async function savePlayer() {
   if (currentProfile.role !== "admin") return;
