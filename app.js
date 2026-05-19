@@ -210,12 +210,12 @@ async function register() {
     return;
   }
 
-  if (mode === "join" && await pseudoExistsInTeam(pseudo, teamIdToJoin)) {
-    setMsg("loginMsg", "Ce pseudo est déjà utilisé dans cette équipe. Choisis un autre pseudo.");
-    return;
-  }
+  // Important : on ne vérifie pas les pseudos ici, car la personne n'est pas
+  // encore connectée. Les règles Firestore refusent la lecture de /users
+  // avant authentification. Le contrôle anti-doublon se fait côté admin au
+  // moment d'accepter la demande.
 
-  setMsg("loginMsg", "Création du compte...");
+  setMsg("loginMsg", mode === "join" ? "Création du compte et envoi de la demande..." : "Création du compte...");
   isRegistering = true;
   try {
     const cred = await createUserWithEmailAndPassword(auth, email, password);
@@ -249,7 +249,13 @@ async function register() {
       showMain();
       subscribeData();
     } else {
-      const team = teams.find((t) => t.id === teamIdToJoin);
+      // Rejoindre une équipe : on relit l'équipe directement depuis Firestore
+      // pour éviter un problème si la liste locale n'était pas encore chargée.
+      const teamSnap = await getDoc(doc(db, "teams", teamIdToJoin));
+      if (!teamSnap.exists()) {
+        throw new Error("Équipe introuvable. Clique sur Actualiser puis réessaie.");
+      }
+      const team = { id: teamSnap.id, ...teamSnap.data() };
       const profile = {
         uid: cred.user.uid,
         email: cred.user.email,
@@ -261,18 +267,21 @@ async function register() {
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp()
       };
-      await setDoc(doc(db, "users", cred.user.uid), profile, { merge: true });
-      await setDoc(doc(db, "teamRequests", requestDocId(teamIdToJoin, cred.user.uid)), {
+      const request = {
         uid: cred.user.uid,
         name: pseudo,
+        requestedName: pseudo,
         teamId: teamIdToJoin,
         teamName: team?.name || "Équipe",
         status: "pending",
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp()
-      }, { merge: true });
+      };
+      await setDoc(doc(db, "users", cred.user.uid), profile, { merge: true });
+      await setDoc(doc(db, "teamRequests", requestDocId(teamIdToJoin, cred.user.uid)), request, { merge: true });
       currentUser = cred.user;
       currentProfile = profile;
+      currentTeam = { id: teamIdToJoin, name: team?.name || "Équipe", ownerUid: team?.ownerUid || "" };
       isRegistering = false;
       setMsg("loginMsg", "Demande envoyée à l’admin de l’équipe.");
       showPending();
@@ -410,7 +419,10 @@ function subscribeData() {
         .forEach((r) => {
           if (!r.uid) return;
           const user = registeredUsers.find((u) => u.uid === r.uid);
-          const merged = { ...r, name: user?.name || r.name || "Joueur", email: user?.email || r.email || "" };
+          // La demande garde le pseudo choisi au moment de l'inscription.
+          // On ne remplace pas ce pseudo par celui d'un autre document pour éviter
+          // les doublons ou les changements de nom inattendus.
+          const merged = { ...r, name: r.requestedName || r.name || user?.name || "Joueur", email: user?.email || r.email || "" };
           if (!byUid.has(r.uid)) byUid.set(r.uid, merged);
         });
       pendingRequests = Array.from(byUid.values());
@@ -1257,7 +1269,9 @@ window.approveAccess = async (uid, role) => {
   const userRef = doc(db, "users", uid);
   const userSnap = await getDoc(userRef);
   const existingUser = userSnap.exists() ? userSnap.data() : {};
-  const finalName = existingUser.name || req?.name || "Joueur";
+  // Le pseudo validé est celui demandé par le joueur. On évite d'utiliser
+  // un nom potentiellement modifié ailleurs avant l'acceptation.
+  const finalName = req?.requestedName || req?.name || existingUser.name || "Joueur";
 
   const duplicateName = registeredUsers.some((u) => {
     if (u.uid === uid) return false;
