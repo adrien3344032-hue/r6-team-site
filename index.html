@@ -106,6 +106,35 @@
         <button id="pendingLogoutBtn" class="secondary" type="button">Déconnexion</button>
       </section>
 
+      <section id="noTeamView" class="auth-screen hidden">
+        <div class="card auth-register-card">
+          <h2>Tu n’es dans aucune équipe</h2>
+          <p class="muted">Tu peux créer ta propre équipe ou demander à rejoindre une équipe existante.</p>
+          <div class="grid two register-grid">
+            <div>
+              <h3>Créer une équipe</h3>
+              <label>Nom de l’équipe</label>
+              <input id="noTeamNameInput" type="text" placeholder="Ex: R6 Wolves" />
+              <button id="createTeamExistingBtn" type="button" class="full-btn">Créer mon équipe</button>
+              <p class="small">Tu deviendras automatiquement admin de cette équipe.</p>
+            </div>
+            <div>
+              <h3>Rejoindre une équipe</h3>
+              <label>Équipe à rejoindre</label>
+              <div class="row">
+                <select id="noTeamSelect"></select>
+                <button id="refreshTeamsExistingBtn" type="button" class="secondary" onclick="window.location.reload()">Actualiser</button>
+              </div>
+              <button id="requestJoinExistingBtn" type="button" class="full-btn secondary">Envoyer une demande</button>
+              <p class="small">L’admin de l’équipe devra accepter ta demande.</p>
+            </div>
+          </div>
+          <p id="noTeamMsg" class="message"></p>
+          <button id="noTeamLogoutBtn" class="secondary" type="button">Déconnexion</button>
+        </div>
+      </section>
+
+
       <section id="mainView" class="hidden">
         <nav class="tabs">
           <button data-tab="dashboard" class="active">Accueil</button>
@@ -123,6 +152,9 @@
               <h2>Bienvenue</h2>
               <p id="roleText">Chargement du rôle...</p>
               <p class="muted">Les données sont synchronisées pour tous les joueurs connectés.</p>
+              <div id="teamMemberActions" class="team-actions">
+                <button id="leaveTeamBtn" type="button" class="secondary">Quitter l’équipe</button>
+              </div>
             </div>
             <div class="card">
               <h2>Résumé dispos</h2>
@@ -348,6 +380,12 @@
               <hr />
               <h3>Comptes inscrits</h3>
               <div id="adminPlayerList"></div>
+              <hr />
+              <div class="danger-zone">
+                <h3>Zone dangereuse</h3>
+                <p class="muted">Supprimer l’équipe retire tous les membres de cette équipe et efface ses données : planning, disponibilités, matchs, historique et demandes.</p>
+                <button id="deleteTeamBtn" type="button" class="danger">Supprimer cette équipe</button>
+              </div>
             </div>
           </div>
         </section>
