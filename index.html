@@ -15,10 +15,22 @@
       </div>
       <div class="auth-box">
         <span id="userInfo">Non connecté</span>
+        <button id="notificationBtn" class="secondary hidden" type="button">🔔 <span id="notificationCount">0</span></button>
         <button id="themeToggleBtn" class="secondary" type="button">Mode clair</button>
         <button id="logoutBtn" class="hidden secondary">Déconnexion</button>
       </div>
     </header>
+
+    <aside id="notificationPanel" class="notification-panel hidden">
+      <div class="section-title">
+        <div>
+          <h2>Notifications</h2>
+          <p class="muted">Dernières actions de ton équipe.</p>
+        </div>
+        <button id="markNotificationsReadBtn" type="button" class="secondary">Marquer comme lu</button>
+      </div>
+      <div id="notificationList"></div>
+    </aside>
 
     <main>
       <section id="setupWarning" class="card warning hidden">
@@ -142,6 +154,7 @@
           <button data-tab="planning">Planning</button>
           <button data-tab="matches">Matchs</button>
           <button data-tab="players">Joueurs & stats</button>
+          <button data-tab="strategies">Stratégies</button>
           <button data-tab="admin" id="adminTab" class="hidden">Admin</button>
           <button data-tab="history" id="historyTabBtn" class="hidden">Historique</button>
         </nav>
@@ -283,6 +296,41 @@
             </div>
           </div>
         </section>
+
+
+        <section id="strategiesTab" class="tab-panel">
+          <div class="card">
+            <div class="section-title">
+              <div>
+                <h2>Stratégies / Strats</h2>
+                <p class="muted">Les admins créent des dossiers et importent des images. Tous les membres peuvent les consulter et zoomer.</p>
+              </div>
+              <div id="stratAdminActions" class="row">
+                <button id="addStratFolderBtn" type="button" class="secondary">+ Dossier</button>
+                <button id="addStratImageBtn" type="button">+ Image</button>
+              </div>
+            </div>
+            <div id="stratBreadcrumb" class="breadcrumb"></div>
+            <div id="stratGrid" class="strat-grid"></div>
+            <p id="stratMsg" class="message"></p>
+            <input id="stratImageInput" class="hidden" type="file" accept="image/*" />
+          </div>
+        </section>
+
+        <div id="imageModal" class="image-modal hidden" role="dialog" aria-modal="true">
+          <div class="image-modal-toolbar">
+            <strong id="imageModalTitle">Image</strong>
+            <div class="row">
+              <button id="zoomOutBtn" type="button" class="secondary">-</button>
+              <button id="zoomResetBtn" type="button" class="secondary">100%</button>
+              <button id="zoomInBtn" type="button" class="secondary">+</button>
+              <button id="closeImageModalBtn" type="button" class="danger">Fermer</button>
+            </div>
+          </div>
+          <div class="image-modal-stage">
+            <img id="imageModalImg" alt="Stratégie" />
+          </div>
+        </div>
 
         <section id="adminTabPanel" class="tab-panel">
           <div class="grid admin-grid">
