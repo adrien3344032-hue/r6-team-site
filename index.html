@@ -1,0 +1,373 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>R6 Team — Matchs & Disponibilités</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div id="app">
+    <header class="topbar">
+      <div>
+        <h1>R6 Team</h1>
+        <p>Matchs, joueurs, stats et disponibilités en ligne</p>
+      </div>
+      <div class="auth-box">
+        <span id="userInfo">Non connecté</span>
+        <button id="themeToggleBtn" class="secondary" type="button">Mode clair</button>
+        <button id="logoutBtn" class="hidden secondary">Déconnexion</button>
+      </div>
+    </header>
+
+    <main>
+      <section id="setupWarning" class="card warning hidden">
+        <h2>Firebase non configuré</h2>
+        <p>Ouvre <code>firebase-config.js</code> et colle ta configuration Firebase Web.</p>
+      </section>
+
+      <section id="loginView" class="auth-screen">
+        <div id="authChoiceView" class="card auth-choice-card">
+          <h2>Bienvenue sur R6 Team</h2>
+          <p class="muted">Connecte-toi si tu as déjà une équipe, ou crée un compte pour créer ta team ou demander à rejoindre une équipe existante.</p>
+          <div class="auth-choice-grid">
+            <button id="showLoginPanelBtn" type="button" class="auth-big-choice">
+              <span class="choice-icon">🔐</span>
+              <strong>Se connecter</strong>
+              <small>J’ai déjà un compte validé dans une équipe.</small>
+            </button>
+            <button id="showRegisterPanelBtn" type="button" class="auth-big-choice primary-choice">
+              <span class="choice-icon">➕</span>
+              <strong>Créer un compte</strong>
+              <small>Créer ma propre équipe ou demander à rejoindre une équipe.</small>
+            </button>
+          </div>
+        </div>
+
+        <div id="loginPanel" class="card narrow hidden">
+          <button id="backFromLoginBtn" type="button" class="link-button">← Retour</button>
+          <h2>Connexion</h2>
+          <p class="muted">Entre ton email et ton mot de passe.</p>
+          <label>Email</label>
+          <input id="emailInput" type="email" placeholder="email@example.com" autocomplete="email" />
+          <label>Mot de passe</label>
+          <input id="passwordInput" type="password" placeholder="Mot de passe" autocomplete="current-password" />
+          <button id="loginBtn" class="full-btn">Connexion</button>
+        </div>
+
+        <div id="registerPanel" class="card auth-register-card hidden">
+          <button id="backFromRegisterBtn" type="button" class="link-button">← Retour</button>
+          <h2>Créer un compte</h2>
+          <p class="muted">D’abord tu crées ton compte. Ensuite tu choisis si tu crées ta propre équipe ou si tu demandes à rejoindre une équipe existante.</p>
+
+          <div class="grid two register-grid">
+            <div>
+              <h3>1. Tes informations</h3>
+              <label>Pseudo joueur</label>
+              <input id="pseudoInput" type="text" placeholder="Ex: Popo" autocomplete="username" />
+              <label>Email</label>
+              <input id="registerEmailInput" type="email" placeholder="email@example.com" autocomplete="email" />
+              <label>Mot de passe</label>
+              <input id="registerPasswordInput" type="password" placeholder="Mot de passe" autocomplete="new-password" />
+            </div>
+
+            <div>
+              <h3>2. Ton équipe</h3>
+              <div class="choice-box vertical-choice">
+                <label class="radio-card"><input type="radio" name="registerMode" value="create" checked> Créer ma propre équipe</label>
+                <label class="radio-card"><input type="radio" name="registerMode" value="join"> Rejoindre une équipe</label>
+              </div>
+
+              <div id="createTeamBlock" class="register-block">
+                <label>Nom de l’équipe à créer</label>
+                <input id="teamNameInput" type="text" placeholder="Ex: R6 Wolves" />
+                <p class="small">Tu deviendras automatiquement admin de cette équipe.</p>
+              </div>
+
+              <div id="joinTeamBlock" class="register-block hidden">
+                <label>Équipe à rejoindre</label>
+                <div class="row">
+                  <select id="teamSelect"></select>
+                  <button id="refreshTeamsBtn" type="button" class="secondary">Actualiser</button>
+                </div>
+                <p class="small">Ta demande sera envoyée à l’admin de l’équipe. Il pourra t’accepter en joueur, en lecture seule, ou refuser.</p>
+              </div>
+            </div>
+          </div>
+
+          <button id="registerBtn" class="full-btn">Créer le compte</button>
+        </div>
+        <p id="loginMsg" class="message auth-message"></p>
+      </section>
+
+      <section id="pendingView" class="card narrow hidden">
+        <h2>Demande envoyée</h2>
+        <p id="pendingText" class="muted">Ta demande est en attente de validation par l’admin de l’équipe.</p>
+        <button id="pendingLogoutBtn" class="secondary" type="button">Déconnexion</button>
+      </section>
+
+      <section id="mainView" class="hidden">
+        <nav class="tabs">
+          <button data-tab="dashboard" class="active">Accueil</button>
+          <button data-tab="availability">Disponibilités</button>
+          <button data-tab="planning">Planning</button>
+          <button data-tab="matches">Matchs</button>
+          <button data-tab="players">Joueurs & stats</button>
+          <button data-tab="admin" id="adminTab" class="hidden">Admin</button>
+          <button data-tab="history" id="historyTabBtn" class="hidden">Historique</button>
+        </nav>
+
+        <section id="dashboardTab" class="tab-panel active">
+          <div class="grid two">
+            <div class="card">
+              <h2>Bienvenue</h2>
+              <p id="roleText">Chargement du rôle...</p>
+              <p class="muted">Les données sont synchronisées pour tous les joueurs connectés.</p>
+            </div>
+            <div class="card">
+              <h2>Résumé dispos</h2>
+              <div id="availabilitySummary"></div>
+            </div>
+          </div>
+        </section>
+
+        <section id="availabilityTab" class="tab-panel">
+          <div class="card">
+            <div class="section-title">
+              <div>
+                <h2>Disponibilités de la semaine</h2>
+                <p class="muted">Chaque joueur modifie sa ligne. Les admins peuvent tout modifier.</p>
+              </div>
+              <button id="saveAvailabilityBtn">Enregistrer les dispos</button>
+            </div>
+            <div id="availabilityTableWrap" class="table-wrap availability-board"></div>
+            <p id="availabilityMsg" class="message"></p>
+          </div>
+        </section>
+
+        <section id="planningTab" class="tab-panel">
+          <div class="card">
+            <div class="section-title">
+              <div>
+                <h2>Planning de la semaine</h2>
+                <p class="muted">Les admins planifient les scrims, tournois ou entraînements. Les joueurs peuvent consulter seulement.</p>
+              </div>
+              <div class="row" id="planningAdminActions">
+                <button id="addPlanningRowBtn" type="button" class="secondary">+ Ajouter une ligne</button>
+                <button id="savePlanningBtn" type="button">Enregistrer le planning</button>
+                <button id="clearPlanningBtn" type="button" class="danger">Vider</button>
+              </div>
+            </div>
+            <div id="planningWrap" class="planning-wrap"></div>
+            <p id="planningMsg" class="message"></p>
+          </div>
+        </section>
+
+        <section id="matchesTab" class="tab-panel">
+          <div class="card">
+            <div class="section-title">
+              <div>
+                <h2>Matchs</h2>
+                <p class="muted">Tous les membres peuvent consulter les matchs.</p>
+              </div>
+            </div>
+            <div id="matchList"></div>
+          </div>
+        </section>
+
+        <section id="playersTab" class="tab-panel">
+          <div class="grid stats-page">
+            <div class="card">
+              <div class="section-title">
+                <div>
+                  <h2>Tableau de statistiques</h2>
+                  <p class="muted">Grand tableau sans barre horizontale, calculé automatiquement à partir des matchs ajoutés.</p>
+                </div>
+                <div>
+                  <label>Filtre période</label>
+                  <select id="statsPeriodFilter" class="period-select">
+                    <option value="all">Tout</option>
+                    <option value="7">7 derniers jours</option>
+                    <option value="30">30 derniers jours</option>
+                    <option value="90">3 derniers mois</option>
+                  </select>
+                </div>
+              </div>
+              <div id="statsTableWrap" class="stats-table-full"></div>
+            </div>
+
+            <div class="card">
+              <div class="section-title">
+                <div>
+                  <h2>Classement interne</h2>
+                  <p class="muted">Meilleurs joueurs par catégorie sur la période sélectionnée.</p>
+                </div>
+              </div>
+              <div id="rankingWrap" class="ranking-grid"></div>
+            </div>
+
+            <div class="card">
+              <div class="section-title">
+                <div>
+                  <h2>Profils radar</h2>
+                  <p class="muted">Vue en toile d’araignée pour comparer rapidement le profil de chaque joueur.</p>
+                </div>
+              </div>
+              <div id="radarCharts" class="radar-grid"></div>
+            </div>
+
+            <div class="grid two charts-grid">
+              <div class="card">
+                <h2>Graphique K/D</h2>
+                <div id="kdChart" class="bar-chart"></div>
+              </div>
+              <div class="card">
+                <h2>Kills par joueur</h2>
+                <div id="killsChart" class="bar-chart"></div>
+              </div>
+              <div class="card">
+                <h2>Headshot %</h2>
+                <div id="hsChart" class="bar-chart"></div>
+              </div>
+              <div class="card">
+                <h2>Entry kills / deaths</h2>
+                <div id="entryChart" class="bar-chart"></div>
+              </div>
+              <div class="card">
+                <h2>Win rate</h2>
+                <div id="winChart" class="bar-chart"></div>
+              </div>
+            </div>
+
+            <div class="grid map-stats-layout">
+              <div class="card map-stats-card">
+                <h2>Stats par map</h2>
+                <div id="mapStatsWrap" class="stats-table-full map-table-wrap"></div>
+              </div>
+              <div class="card players-card">
+                <h2>Joueurs inscrits</h2>
+                <div id="playerList"></div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section id="adminTabPanel" class="tab-panel">
+          <div class="grid admin-grid">
+            <div class="card wide-card">
+              <h2>Ajouter un match complet</h2>
+              <p class="muted">Saisie avancée : infos générales, joueurs présents, stats individuelles et rounds détaillés.</p>
+
+              <div class="grid two compact">
+                <div>
+                  <label>Date</label>
+                  <input id="matchDate" type="date" />
+                </div>
+                <div>
+                  <label>Adversaire</label>
+                  <input id="matchOpponent" type="text" placeholder="Nom de l'équipe adverse" />
+                </div>
+                <div>
+                  <label>Map</label>
+                  <select id="matchMap"></select>
+                </div>
+                <div>
+                  <label>Mode / type</label>
+                  <select id="matchMode">
+                    <option value="Scrim">Scrim</option>
+                    <option value="Tournoi">Tournoi</option>
+                  </select>
+                </div>
+                <div>
+                  <label>Score équipe</label>
+                  <input id="matchTeamScore" type="number" min="0" placeholder="7" />
+                </div>
+                <div>
+                  <label>Score adverse</label>
+                  <input id="matchEnemyScore" type="number" min="0" placeholder="4" />
+                </div>
+                <div>
+                  <label>Résultat</label>
+                  <select id="matchResult">
+                    <option value="Victoire">Victoire</option>
+                    <option value="Défaite">Défaite</option>
+                    <option value="Nul">Nul</option>
+                  </select>
+                </div>
+                <div>
+                  <label>Lien VOD / vidéo</label>
+                  <input id="matchVodUrl" type="url" placeholder="https://youtube.com/..." />
+                </div>
+              </div>
+
+              <h3>Joueurs présents</h3>
+              <p class="muted">Coche les joueurs du match, puis saisis leurs kills, headshots, morts et assists. Le HS% est calculé automatiquement avec headshots ÷ kills.</p>
+              <div id="matchPlayersWrap" class="table-wrap"></div>
+
+              <div class="section-title small-title">
+                <div>
+                  <h3>Rounds</h3>
+                  <p class="muted">Ajoute les rounds pour suivre premier kill, première mort, plant, defuse et clutch.</p>
+                </div>
+                <div class="row">
+                  <button id="addRoundBtn" type="button" class="secondary">+ Round</button>
+                  <button id="clearRoundsBtn" type="button" class="secondary">Vider rounds</button>
+                </div>
+              </div>
+              <div id="roundsWrap" class="rounds-wrap"></div>
+
+              <label>Notes globales</label>
+              <textarea id="matchNotes" rows="4" placeholder="Remarques, bans, points à améliorer..."></textarea>
+              <div class="row action-row">
+                <button id="addMatchBtn">Ajouter le match complet</button>
+                <button id="addRandomMatchBtn" type="button" class="secondary">Ajouter une simulation de match</button>
+              </div>
+              <p id="matchMsg" class="message"></p>
+            </div>
+
+            <div class="card">
+              <h2>Demandes d’accès</h2>
+              <p class="muted">Quand quelqu’un crée un compte, il apparaît ici. Un admin doit l’accepter ou le refuser.</p>
+              <div id="accessRequestsList"></div>
+              <hr />
+
+              <h2>Gérer les comptes inscrits</h2>
+              <p class="muted">Seuls les comptes acceptés comme joueur/admin apparaissent dans les dispos et les stats.</p>
+              <label>Pseudo / nom affiché</label>
+              <input id="newPlayerName" type="text" placeholder="Ex: Adrien" />
+              <label>Email du compte existant</label>
+              <input id="newPlayerEmail" type="email" placeholder="email@example.com" />
+              <label>Rôle</label>
+              <select id="newPlayerRole">
+                <option value="player">Joueur</option>
+                <option value="viewer">Lecture seule</option>
+                <option value="admin">Admin</option>
+              </select>
+              <button id="savePlayerBtn">Mettre à jour le compte</button>
+              <p id="playerMsg" class="message"></p>
+              <hr />
+              <h3>Comptes inscrits</h3>
+              <div id="adminPlayerList"></div>
+            </div>
+          </div>
+        </section>
+
+        <section id="historyTab" class="tab-panel">
+          <div class="card">
+            <div class="section-title">
+              <div>
+                <h2>Historique des changements</h2>
+                <p class="muted">Journal des actions importantes : matchs, planning, disponibilités et comptes.</p>
+              </div>
+            </div>
+            <div id="activityLogWrap" class="activity-log"></div>
+          </div>
+        </section>
+      </section>
+    </main>
+  </div>
+
+  <script src="firebase-config.js"></script>
+  <script type="module" src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,132 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function userDoc(uid) {
+      return get(/databases/$(database)/documents/users/$(uid));
+    }
+
+    function hasUser(uid) {
+      return exists(/databases/$(database)/documents/users/$(uid));
+    }
+
+    function isMemberOf(teamId) {
+      return isSignedIn()
+        && hasUser(request.auth.uid)
+        && userDoc(request.auth.uid).data.teamId == teamId
+        && userDoc(request.auth.uid).data.status == "active"
+        && userDoc(request.auth.uid).data.role in ["admin", "player", "viewer"];
+    }
+
+    function isAdminOf(teamId) {
+      return isSignedIn()
+        && hasUser(request.auth.uid)
+        && userDoc(request.auth.uid).data.teamId == teamId
+        && userDoc(request.auth.uid).data.status == "active"
+        && userDoc(request.auth.uid).data.role == "admin";
+    }
+
+    function ownsTeam(teamId, uid) {
+      return exists(/databases/$(database)/documents/teams/$(teamId))
+        && get(/databases/$(database)/documents/teams/$(teamId)).data.ownerUid == uid;
+    }
+
+    match /teams/{teamId} {
+      // Public pour afficher la liste des équipes au moment de rejoindre.
+      allow read: if true;
+      // Une personne connectée peut créer sa propre équipe.
+      allow create: if isSignedIn() && request.resource.data.ownerUid == request.auth.uid;
+      // Seul l'admin de cette équipe peut modifier/supprimer l'équipe.
+      allow update, delete: if isAdminOf(teamId);
+
+      match /availability/{docId} {
+        allow read: if isMemberOf(teamId);
+        allow create, update: if isAdminOf(teamId)
+          || (isMemberOf(teamId) && userDoc(request.auth.uid).data.role == "player");
+        allow delete: if isAdminOf(teamId);
+      }
+
+      match /planning/{docId} {
+        allow read: if isMemberOf(teamId);
+        allow create, update, delete: if isAdminOf(teamId);
+      }
+
+      match /matches/{matchId} {
+        allow read: if isMemberOf(teamId);
+        allow create, update, delete: if isAdminOf(teamId);
+      }
+
+      match /activityLog/{logId} {
+        allow read: if isAdminOf(teamId);
+        allow create: if isMemberOf(teamId);
+        allow update, delete: if false;
+      }
+    }
+
+    match /users/{userId} {
+      allow read: if isSignedIn();
+
+      // Création de profil :
+      // - pending pour rejoindre une équipe,
+      // - admin uniquement si l'utilisateur vient de créer l'équipe dont il est owner.
+      allow create: if isSignedIn()
+        && request.auth.uid == userId
+        && (
+          (request.resource.data.role == "pending" && request.resource.data.status == "pending")
+          ||
+          (request.resource.data.role == "admin"
+            && request.resource.data.status == "active"
+            && ownsTeam(request.resource.data.teamId, userId))
+        );
+
+      // L'utilisateur peut modifier son pseudo, mais pas se donner un rôle.
+      // Exception : s'il est owner de l'équipe, il peut être réparé en admin.
+      // Un admin peut valider/refuser les demandes de son équipe.
+      allow update: if (
+          isSignedIn()
+          && request.auth.uid == userId
+          && resource.data.teamId == request.resource.data.teamId
+          && (
+            (
+              resource.data.role == request.resource.data.role
+              && resource.data.status == request.resource.data.status
+            )
+            ||
+            (
+              request.resource.data.role == "admin"
+              && request.resource.data.status == "active"
+              && ownsTeam(request.resource.data.teamId, userId)
+            )
+          )
+        )
+        || (
+          isSignedIn()
+          && hasUser(request.auth.uid)
+          && hasUser(userId)
+          && userDoc(request.auth.uid).data.role == "admin"
+          && userDoc(request.auth.uid).data.status == "active"
+          && userDoc(request.auth.uid).data.teamId == userDoc(userId).data.teamId
+        );
+
+      allow delete: if isSignedIn() && request.auth.uid == userId;
+    }
+
+    match /teamRequests/{requestId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn()
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.status == "pending";
+      allow update: if isSignedIn()
+        && hasUser(request.auth.uid)
+        && userDoc(request.auth.uid).data.role == "admin"
+        && userDoc(request.auth.uid).data.status == "active"
+        && userDoc(request.auth.uid).data.teamId == resource.data.teamId;
+      allow delete: if false;
+    }
+  }
+}
