@@ -287,7 +287,10 @@ async function register() {
         updatedAt: serverTimestamp()
       };
       await setDoc(doc(db, "users", cred.user.uid), profile, { merge: true });
-      await setDoc(doc(db, "teamRequests", requestDocId(teamIdToJoin, cred.user.uid)), request, { merge: true });
+      // Nouvelle demande avec un ID unique : cela permet de refaire une demande
+      // après avoir quitté/refusé une équipe, sans être bloqué par l'ancien
+      // document teamRequests déjà marqué accepted/rejected.
+      await addDoc(collection(db, "teamRequests"), request);
       currentUser = cred.user;
       currentProfile = profile;
       currentTeam = { id: teamIdToJoin, name: team?.name || "Équipe", ownerUid: team?.ownerUid || "" };
@@ -453,7 +456,11 @@ async function requestJoinTeamForCurrentUser() {
       teamName: team.name || "Équipe",
       updatedAt: serverTimestamp()
     }, { merge: true });
-    await setDoc(doc(db, "teamRequests", requestDocId(teamIdToJoin, currentUser.uid)), {
+    // On crée toujours une nouvelle demande avec un ID unique.
+    // Ancien bug : l'ancien document team_uid existait déjà en accepted/rejected,
+    // donc une nouvelle demande faisait un update interdit par les règles Firestore
+    // et l'admin ne voyait aucune notification.
+    await addDoc(collection(db, "teamRequests"), {
       uid: currentUser.uid,
       name,
       requestedName: name,
@@ -462,7 +469,7 @@ async function requestJoinTeamForCurrentUser() {
       status: "pending",
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp()
-    }, { merge: true });
+    });
     currentProfile = { ...currentProfile, role: "pending", status: "pending", teamId: teamIdToJoin, teamName: team.name || "Équipe" };
     currentTeam = { id: teamIdToJoin, name: team.name || "Équipe", ownerUid: team.ownerUid || "" };
     showPending();
