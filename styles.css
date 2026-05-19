@@ -963,3 +963,7 @@ body.light-theme .primary-choice {
   .auth-choice-card, .auth-register-card { padding: 20px; }
   .auth-big-choice { min-height: 145px; }
 }
+
+.team-actions { margin-top: 18px; display: flex; gap: 10px; flex-wrap: wrap; }
+.danger-zone { border: 1px solid rgba(255, 99, 99, 0.35); background: rgba(255, 99, 99, 0.08); border-radius: 18px; padding: 16px; margin-top: 18px; }
+.danger-zone h3 { margin-top: 0; color: #ff9c9c; }
